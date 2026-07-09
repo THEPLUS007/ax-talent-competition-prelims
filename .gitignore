@@ -1,0 +1,22 @@
+# local environment
+.env
+.env.local
+.env.*.local
+src/.env
+src/.env.local
+src/.env.*.local
+
+# dependencies/build
+node_modules/
+dist/
+src/node_modules/
+src/dist/
+
+# local agent/tool settings
+.claude/
+.codex/
+
+# test/build cache
+src/test-results/
+src/playwright-report/
+*.tsbuildinfo

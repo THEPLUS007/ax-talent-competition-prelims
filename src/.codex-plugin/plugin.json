@@ -1,0 +1,26 @@
+{
+  "name": "travel-blocks-ai",
+  "version": "0.1.0",
+  "description": "영상이나 여행 링크를 AI가 분석해 블록형 여행 일정으로 변환하는 MyRealTrip용 Codex Plugin MVP입니다.",
+  "author": {
+    "name": "OpenAI AX Hackathon Team"
+  },
+  "license": "MIT",
+  "keywords": ["travel", "myrealtrip", "ai", "itinerary", "blocks"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Travel Blocks AI",
+    "shortDescription": "여행 링크와 텍스트를 블록형 일정으로 변환합니다.",
+    "longDescription": "Travel Blocks AI는 Youtube URL, 블로그 URL, 여행 일정 텍스트를 분석해 Day별 블록 일정으로 만들고, 사용자가 블록을 이동하거나 추천 블록을 추가해 여행 계획을 조립할 수 있게 돕습니다.",
+    "developerName": "OpenAI AX Hackathon Team",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "제주 여행 링크를 블록 일정으로 바꿔줘.",
+      "3일 여행 일정을 Day별 카드로 정리해줘.",
+      "추천 블록으로 여행 일정을 재조합해줘."
+    ],
+    "brandColor": "#2B6BEF"
+  }
+}
