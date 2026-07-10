@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EMPTY_TRIP_FORM } from '../constants/travel';
 import { inferTravelSourceType } from '../services/sourceTypeService';
 import * as travelApi from '../services/travelApi';
@@ -136,6 +136,7 @@ export function useTravelPlanner() {
   const [isSaved, setIsSaved] = useState(false);
   const [currentTripId, setCurrentTripId] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<TravelBlock[]>([]);
+  const activeAiRequestRef = useRef<{ key: string; promise: Promise<unknown> } | null>(null);
 
   const selectedDay = useMemo(
     () => days.find((day) => day.id === selectedDayId) ?? days[0],
@@ -143,6 +144,20 @@ export function useTravelPlanner() {
   );
 
   const markDirty = useCallback(() => setIsDirty(true), []);
+
+  const runSingleAiRequest = useCallback(<T,>(key: string, task: () => Promise<T>): Promise<T> => {
+    if (activeAiRequestRef.current?.key === key) {
+      return activeAiRequestRef.current.promise as Promise<T>;
+    }
+
+    const promise = task().finally(() => {
+      if (activeAiRequestRef.current?.key === key) {
+        activeAiRequestRef.current = null;
+      }
+    });
+    activeAiRequestRef.current = { key, promise };
+    return promise;
+  }, []);
 
   const saveCurrentPlan = useCallback(async () => {
     try {
@@ -233,17 +248,18 @@ export function useTravelPlanner() {
   }, []);
 
   const analyze = useCallback(async (override?: { sourceType?: TravelSourceType; content?: string }) => {
+    const content = (override?.content ?? sourceContent).trim();
+    const requestKey = `analyze:${content}`;
     setIsAnalyzing(true);
     setErrorMessage('');
     setStatusMessage('입력한 여행 소스를 분석하고 있습니다.');
 
     try {
-      const content = override?.content ?? sourceContent;
       const inferredSourceType = override?.sourceType ?? inferTravelSourceType(content);
-      const analyzedDays = await travelApi.analyzeLinkOrText({
+      const analyzedDays = await runSingleAiRequest(requestKey, () => travelApi.analyzeLinkOrText({
         sourceType: inferredSourceType,
         content,
-      });
+      }));
 
       setSourceType(inferredSourceType);
 
@@ -264,15 +280,20 @@ export function useTravelPlanner() {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [sourceContent]);
+  }, [runSingleAiRequest, sourceContent]);
 
   const createAiTrip = useCallback(
     async (content: string) => {
+      const nextContent = content.trim();
+      setIsAnalyzing(true);
+      setErrorMessage('');
+      setStatusMessage('AI 여행 일정을 생성하고 있습니다.');
+
       try {
-        const plan = await travelApi.generateTripWithAI(content);
+        const plan = await runSingleAiRequest(`generate-trip:${nextContent}`, () => travelApi.generateTripWithAI(nextContent));
         setTrip(plan.trip);
         setSourceType('text');
-        setSourceContent(content);
+        setSourceContent(nextContent);
         setDays(plan.days);
         setConnections(plan.connections);
         setSelectedDayId(plan.days[0]?.id ?? 'day-1');
@@ -285,19 +306,27 @@ export function useTravelPlanner() {
       } catch (error) {
         console.error('[useTravelPlanner] AI 여행 생성 실패', error);
         setErrorMessage(error instanceof Error ? error.message : 'AI 여행 생성 중 오류가 발생했습니다.');
+        setStatusMessage('AI 여행 생성을 완료하지 못했습니다. 안전한 기본 결과를 확인해 주세요.');
+      } finally {
+        setIsAnalyzing(false);
       }
     },
-    [],
+    [runSingleAiRequest],
   );
 
   const createSourceTrip = useCallback(
     async (content: string) => {
+      const nextContent = content.trim();
+      setIsAnalyzing(true);
+      setErrorMessage('');
+      setStatusMessage('입력한 여행 소스를 분석하고 있습니다.');
+
       try {
-        const inferredSourceType = inferTravelSourceType(content);
-        const plan = await travelApi.createTripFromSource(content);
+        const inferredSourceType = inferTravelSourceType(nextContent);
+        const plan = await runSingleAiRequest(`source-trip:${nextContent}`, () => travelApi.createTripFromSource(nextContent));
         setTrip(plan.trip);
         setSourceType(inferredSourceType);
-        setSourceContent(content);
+        setSourceContent(nextContent);
         setDays(plan.days);
         setConnections(plan.connections);
         setSelectedDayId(plan.days[0]?.id ?? 'day-1');
@@ -310,9 +339,12 @@ export function useTravelPlanner() {
       } catch (error) {
         console.error('[useTravelPlanner] 소스 여행 생성 실패', error);
         setErrorMessage(error instanceof Error ? error.message : '소스 여행 생성 중 오류가 발생했습니다.');
+        setStatusMessage('소스 분석을 완료하지 못했습니다. 안전한 기본 결과를 확인해 주세요.');
+      } finally {
+        setIsAnalyzing(false);
       }
     },
-    [],
+    [runSingleAiRequest],
   );
 
   const addDay = useCallback(() => {
@@ -708,6 +740,11 @@ export function useTravelPlanner() {
   const loadSavedPlans = useCallback((userId?: string) => travelApi.loadTrips(userId), []);
 
   const loadRecommendations = useCallback(async () => {
+    if (!hasStarted || !selectedDay) {
+      setRecommendations([]);
+      return;
+    }
+
     try {
       const nextRecommendations = await travelApi.getRecommendations(trip, selectedDay);
       setRecommendations(nextRecommendations);
@@ -715,7 +752,7 @@ export function useTravelPlanner() {
       console.error('[useTravelPlanner] 추천 조회 실패', error);
       setRecommendations([]);
     }
-  }, [selectedDay, trip]);
+  }, [hasStarted, selectedDay, trip]);
 
   useEffect(() => {
     void loadRecommendations();

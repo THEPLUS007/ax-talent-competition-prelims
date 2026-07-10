@@ -1,11 +1,7 @@
 import type { Connect } from 'vite';
+import { callGeminiJson, GeminiClientError } from './geminiClient';
 
-declare const process: {
-  env: Record<string, string | undefined>;
-};
 
-const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
-const GEMINI_TIMEOUT_MS = 25000;
 const NOMINATIM_TIMEOUT_MS = 7000;
 const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
 const NOMINATIM_USER_AGENT = 'travel-blocks-ai-hackathon/1.0';
@@ -134,31 +130,6 @@ function parseJsonObject(rawBody: string): JsonRecord {
   return parsed as JsonRecord;
 }
 
-function extractJsonText(text: string): string {
-  const trimmed = text.trim();
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-
-  if (fencedMatch?.[1]) {
-    return fencedMatch[1].trim();
-  }
-
-  const firstArray = trimmed.indexOf('[');
-  const lastArray = trimmed.lastIndexOf(']');
-
-  if (firstArray >= 0 && lastArray > firstArray) {
-    return trimmed.slice(firstArray, lastArray + 1);
-  }
-
-  const firstObject = trimmed.indexOf('{');
-  const lastObject = trimmed.lastIndexOf('}');
-
-  if (firstObject >= 0 && lastObject > firstObject) {
-    return trimmed.slice(firstObject, lastObject + 1);
-  }
-
-  return trimmed;
-}
-
 function getString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
 }
@@ -246,6 +217,41 @@ function normalizeTravelDays(parsed: unknown): TravelDay[] {
   throw new Error('INVALID_TRAVEL_DAYS');
 }
 
+function normalizeUserInput(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 6000);
+}
+
+function geminiErrorStatus(error: unknown): number {
+  if (!(error instanceof GeminiClientError)) {
+    return 504;
+  }
+
+  if (error.status === 401 || error.status === 403) return error.status;
+  if (error.category === 'rate_limit') return 429;
+  if (error.category === 'timeout') return 504;
+  if (error.category === 'unavailable') return error.status ?? 503;
+  if (error.category === 'bad_request' || error.category === 'parse') return 422;
+  return error.status ?? 504;
+}
+
+function geminiErrorCode(error: unknown): string {
+  if (!(error instanceof GeminiClientError)) {
+    return 'AI_PROVIDER_FAILED';
+  }
+
+  if (error.category === 'rate_limit') return 'AI_RATE_LIMITED';
+  if (error.category === 'timeout') return 'AI_TIMEOUT';
+  if (error.category === 'auth') return 'AI_AUTH_FAILED';
+  if (error.category === 'unavailable') return 'AI_UNAVAILABLE';
+  if (error.category === 'bad_request') return 'AI_BAD_REQUEST';
+  if (error.category === 'parse') return 'AI_PARSE_FAILED';
+  return 'AI_PROVIDER_FAILED';
+}
+
+function sendGeminiError(response: InternalResponse, error: unknown, fallbackMessage: string) {
+  sendError(response, geminiErrorStatus(error), geminiErrorCode(error), fallbackMessage);
+}
+
 function fallbackTrip(prompt: string, days: TravelDay[]): TripFormData {
   const city = days.find((day) => day.city)?.city ?? '여행지';
   const durationMatch = prompt.match(/\d+\s*박\s*\d+\s*일/)?.[0] ?? `${Math.max(days.length, 1)}일`;
@@ -291,7 +297,7 @@ function normalizeTravelPlan(parsed: unknown, prompt: string): TravelPlanPayload
 
 function buildGeminiAnalyzePrompt(input: JsonRecord): string {
   const sourceType = typeof input.sourceType === 'string' ? input.sourceType : 'text';
-  const content = typeof input.content === 'string' ? input.content.trim() : '';
+  const content = normalizeUserInput(typeof input.content === 'string' ? input.content : '');
 
   return [
     'You are a travel itinerary parser for a Korean travel planning app.',
@@ -322,58 +328,6 @@ function buildGeminiTripPrompt(prompt: string): string {
   ].join('\n');
 }
 
-async function callGeminiJson(prompt: string): Promise<unknown> {
-  const key = process.env.GEMINI_API_KEY;
-
-  if (!key) {
-    throw new Error('AI_PROVIDER_UNAVAILABLE');
-  }
-
-  const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
-  const geminiResponse = await withTimeout(
-    fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.2,
-          maxOutputTokens: 8192,
-        },
-      }),
-    }),
-    GEMINI_TIMEOUT_MS,
-  );
-
-  if (!geminiResponse.ok) {
-    throw new Error('AI_PROVIDER_FAILED');
-  }
-
-  const geminiJson = await geminiResponse.json() as JsonRecord;
-  const candidates = Array.isArray(geminiJson.candidates) ? geminiJson.candidates : [];
-  const firstCandidate = candidates[0] as JsonRecord | undefined;
-  const contentRecord = firstCandidate?.content as JsonRecord | undefined;
-  const parts = Array.isArray(contentRecord?.parts) ? contentRecord.parts : [];
-  const generatedText = parts
-    .map((part) => (part && typeof part === 'object' ? (part as JsonRecord).text : undefined))
-    .filter((part): part is string => typeof part === 'string')
-    .join('\n')
-    .trim();
-
-  if (!generatedText) {
-    throw new Error('AI_EMPTY_RESPONSE');
-  }
-
-  return JSON.parse(extractJsonText(generatedText)) as unknown;
-}
-
 async function handleAnalyzeLink(request: InternalRequest, response: InternalResponse) {
   if (request.method !== 'POST') {
     sendError(response, 405, 'METHOD_NOT_ALLOWED', '지원하지 않는 요청 방식입니다.');
@@ -389,7 +343,7 @@ async function handleAnalyzeLink(request: InternalRequest, response: InternalRes
     return;
   }
 
-  const content = typeof input.content === 'string' ? input.content.trim() : '';
+  const content = normalizeUserInput(typeof input.content === 'string' ? input.content : '');
 
   if (!content) {
     sendError(response, 400, 'EMPTY_INPUT', '분석할 입력이 비어 있습니다.');
@@ -397,10 +351,10 @@ async function handleAnalyzeLink(request: InternalRequest, response: InternalRes
   }
 
   try {
-    const parsedDays = normalizeTravelDays(await callGeminiJson(buildGeminiAnalyzePrompt(input)));
+    const parsedDays = normalizeTravelDays(await callGeminiJson(buildGeminiAnalyzePrompt({ ...input, content }), 'analyze-input'));
     sendJson(response, 200, parsedDays);
-  } catch {
-    sendError(response, 504, 'AI_PROVIDER_TIMEOUT_OR_PARSE_FAILED', 'AI 분석 결과를 가져오지 못했습니다.');
+  } catch (error) {
+    sendGeminiError(response, error, 'AI 분석 결과를 가져오지 못했습니다.');
   }
 }
 
@@ -419,7 +373,7 @@ async function handleGenerateTrip(request: InternalRequest, response: InternalRe
     return;
   }
 
-  const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
+  const prompt = normalizeUserInput(typeof input.prompt === 'string' ? input.prompt : '');
 
   if (!prompt) {
     sendError(response, 400, 'EMPTY_INPUT', '여행 요청이 비어 있습니다.');
@@ -427,19 +381,10 @@ async function handleGenerateTrip(request: InternalRequest, response: InternalRe
   }
 
   try {
-    const plan = normalizeTravelPlan(await callGeminiJson(buildGeminiTripPrompt(prompt)), prompt);
+    const plan = normalizeTravelPlan(await callGeminiJson(buildGeminiTripPrompt(prompt), 'generate-trip'), prompt);
     sendJson(response, 200, plan);
-  } catch {
-    try {
-      const days = normalizeTravelDays(await callGeminiJson(buildGeminiAnalyzePrompt({ sourceType: 'text', content: prompt })));
-      sendJson(response, 200, {
-        trip: fallbackTrip(prompt, days),
-        days,
-        connections: [],
-      });
-    } catch {
-      sendError(response, 504, 'AI_PROVIDER_TIMEOUT_OR_PARSE_FAILED', 'AI 여행 일정을 생성하지 못했습니다.');
-    }
+  } catch (error) {
+    sendGeminiError(response, error, 'AI 여행 일정을 생성하지 못했습니다.');
   }
 }
 
@@ -721,6 +666,8 @@ function buildGeminiRecommendationsPrompt(input: JsonRecord): string {
     'Recommendation schema: { "title": string, "category": "음식점"|"관광지"|"카페"|"쇼핑"|"숙소"|"이동"|"기타", "reason": string, "estimatedDurationMinutes": number, "area": string, "confidence": number }.',
     'Return 3 to 5 recommendations only.',
     'Do not recommend places already present in the existing place list.',
+    'If Day region is provided, recommend places inside that region first and do not mix unrelated regions.',
+    'If Day region is not provided, use Day city. If Day city is also missing, use Trip city.',
     'Use short Korean text and practical real-place style names.',
     `Trip city: ${getString(trip.city) || getString(day.city) || '여행지'}`,
     `Trip country: ${getString(trip.country)}`,
@@ -800,10 +747,10 @@ async function handleRecommendations(request: InternalRequest, response: Interna
   }
 
   try {
-    const parsed = await callGeminiJson(buildGeminiRecommendationsPrompt(input));
+    const parsed = await callGeminiJson(buildGeminiRecommendationsPrompt(input), 'recommendations');
     sendJson(response, 200, normalizeGeminiRecommendations(parsed, input));
-  } catch {
-    sendError(response, 504, 'AI_RECOMMENDATIONS_FAILED', '추천 블록을 생성하지 못했습니다.');
+  } catch (error) {
+    sendGeminiError(response, error, '추천 블록을 생성하지 못했습니다.');
   }
 }
 

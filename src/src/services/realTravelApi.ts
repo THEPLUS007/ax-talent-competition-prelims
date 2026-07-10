@@ -4,20 +4,23 @@ import { inferTravelSourceType } from './sourceTypeService';
 import type { TravelPlanPayload } from './mockTravelApi';
 import type { SavedTravelPlan, TravelAnalysisInput, TravelBlock, TravelDay, TripFormData } from '../types/travel';
 
-async function withTimeout<T>(task: Promise<T>, timeoutMs = API_TIMEOUT_MS): Promise<T> {
-  let timeoutId: number | undefined;
+async function fetchWithTimeout(endpoint: string, init?: RequestInit, timeoutMs = API_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await Promise.race([
-      task,
-      new Promise<T>((_, reject) => {
-        timeoutId = window.setTimeout(() => reject(new Error('API 요청 시간이 초과되었습니다.')), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutId !== undefined) {
-      window.clearTimeout(timeoutId);
+    return await fetch(endpoint, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('API 요청 시간이 초과되었습니다.');
     }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
@@ -26,11 +29,11 @@ async function postJson<T>(endpoint: string, body: unknown): Promise<T> {
     throw new Error('실제 API endpoint가 설정되지 않았습니다.');
   }
 
-  const response = await withTimeout(fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }));
+  });
 
   if (!response.ok) {
     throw new Error();
@@ -44,7 +47,7 @@ async function getJson<T>(endpoint: string): Promise<T> {
     throw new Error('실제 API endpoint가 설정되지 않았습니다.');
   }
 
-  const response = await withTimeout(fetch(endpoint));
+  const response = await fetchWithTimeout(endpoint);
 
   if (!response.ok) {
     throw new Error();

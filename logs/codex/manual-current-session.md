@@ -507,3 +507,53 @@ Current Mock OFF status:
   - `npm run build`: passed.
   - `npm run lint`: passed.
   - 5173 preview: running.
+
+## Manual Conversation Log - 2026-07-10 Gemini Stability And Regional Fallback
+
+User:
+git 연결, Mock OFF 로컬 실행, Real mode preview, 지역 fallback 문제, Gemini 429/503 안정화, 그리고 로그 업데이트를 요청했다.
+
+Assistant:
+Git 저장소를 초기화하고 사용자 정보 및 원격 저장소를 설정한 뒤 초기 제출 커밋을 만들었다. 이후 사용자가 직접 업로드했다고 확인했다. Mock OFF 기본 실행 상태를 유지하면서 5173 preview를 실행했고, 로컬에서 실제 서비스처럼 확인할 수 있도록 했다.
+
+AI 작성 탭에서 거제, 대마도, 부산 입력 시 제주 애월 fallback이 표시되는 문제를 확인했다. 원인은 Gemini 응답 실패 또는 지연 시 fallback 데이터가 요청 지역을 충분히 포함하지 못하고 기본 제주 데이터로 내려가는 구조였다. 이를 보완하기 위해 거제, 대마도, 부산 mock/fallback 여행 데이터와 도시별/지역별 추천 데이터를 추가했다. 추천 fallback은 `day.region` -> `day.city` -> `trip.city` 순서로 정확히 매칭되는 데이터만 우선 반환하도록 정리하여 다른 지역 추천이 섞이지 않게 수정했다.
+
+Gemini 호출에서 429 Too Many Requests, RESOURCE_EXHAUSTED, 503 Service Unavailable, UNAVAILABLE 문제가 발생한다고 보고되어 전체 호출 경로를 조사했다. 실제 호출은 프론트엔드가 서버 API route를 호출하고, 서버에서만 Gemini API를 호출하는 구조였다. 다만 기존에는 일정 생성 경로에서 실패 시 Gemini 분석 경로를 한 번 더 호출할 수 있었고, 추천 블록 호출도 화면 상태에 따라 자동으로 발생할 수 있어 사용자가 체감하는 한 번의 행동보다 Gemini 요청이 많아질 수 있었다.
+
+이를 해결하기 위해 서버 전용 공통 Gemini 클라이언트를 추가했다. 클라이언트는 timeout, retry/backoff/jitter, `Retry-After` 우선 처리, 동시 요청 1개 제한, 짧은 queue, 동일 요청 in-flight dedupe, 안전한 diagnostic log를 담당한다. 재시도 대상은 408, 429, 500, 502, 503, 504, timeout/network 계열로 제한했고, 400/401/403 계열은 반복 재시도하지 않도록 했다. 로그에는 request id, task, status/category, attempt, duration, fallback 여부만 남기고 prompt, 원문 입력, API 응답 원문, key, token, authorization 값은 기록하지 않도록 했다.
+
+프론트엔드에는 분석/생성 요청 single-flight guard를 추가해 요청 중 동일 작업이 중복 실행되지 않게 했다. 추천 API 호출은 선택된 Day와 시작 상태가 있을 때만 수행되도록 보호했다. `realTravelApi`의 timeout은 `AbortController` 기반으로 바꿔 timeout 이후에도 fetch가 백그라운드에 남지 않게 했다. 사용자가 요청한 대로 프론트엔드 API 대기 시간은 120초로 조정했다. 서버 Gemini 개별 요청은 환경변수 기반 timeout/retry/concurrency 설정을 사용한다.
+
+Environment/example 파일에는 실제 값 없이 안전한 placeholder와 기본 설정만 유지했다. `.env.local` 내용과 API key 값은 읽거나 출력하지 않았다. 애플리케이션 로그와 작업 보고에도 key, token, authorization, cookie, session 값이 남지 않도록 점검했다.
+
+Verification:
+
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `http://localhost:5173/`: preview running and returned 200.
+- Real Gemini 반복 smoke test는 429/503 조사 중 추가 쿼터 소모를 피하기 위해 수행하지 않았다.
+- Mock 기능은 삭제하지 않았고 `VITE_USE_MOCK=true/false` 전환 구조를 유지했다.
+
+## Manual Conversation Log - 2026-07-10 External API And Map Check
+
+User:
+API를 쓰는 외부 기능들과 지도를 쓰는 기능들이 정상 작동하는지 확인해 달라고 요청했다. 이어서 로그 업데이트와 커밋을 요청했다.
+
+Assistant:
+외부 기능 호출 경로를 점검했다. 현재 외부 연동은 Gemini 기반 일정 생성/링크 분석/추천 블록, OpenStreetMap Nominatim 기반 장소 검색/좌표 검색/역지오코딩, 그리고 Google Maps 검색 링크 기반 지도에서 보기로 나뉜다.
+
+로컬 preview `http://localhost:5173/`는 200 OK로 응답했다. Nominatim 장소 검색은 부산 해운대 기준 결과 5개를 반환했고, 좌표 검색은 해운대 좌표 결과를 반환했으며, 역지오코딩은 좌표를 부산 지역 정보로 변환했다. 블록 카드의 지도에서 보기 기능은 장소명과 위치를 Google Maps 검색 URL로 인코딩해 새 탭으로 여는 구조임을 확인했다.
+
+Gemini 기반 `/api/generate-trip`, `/api/recommendations`, `/api/analyze-link`는 각각 1회씩만 민감정보 없이 점검했고, 현재 provider rate limit 상태로 429를 반환했다. 앱 서비스 계층에는 `AUTO_FALLBACK` 기반 Mock fallback이 유지되어 있어 Gemini가 429/503/timeout을 반환해도 화면 전체가 중단되지 않고 안전한 기본 결과로 진행되는 구조임을 확인했다.
+
+Verification:
+
+- 5173 preview: 200 OK.
+- Nominatim place search: OK.
+- Nominatim coordinate search: OK.
+- Nominatim reverse geocoding: OK.
+- Google Maps search link structure: OK.
+- Gemini routes: currently 429 rate limited, fallback path available.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `.env.local` content and API key values were not read or written.

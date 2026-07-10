@@ -1,6 +1,6 @@
 export const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
 export const AUTO_FALLBACK = import.meta.env.VITE_AUTO_FALLBACK !== 'false';
-export const API_TIMEOUT_MS = 20000;
+export const API_TIMEOUT_MS = 120000;
 export const PLACE_SEARCH_DEBOUNCE_MS = 350;
 
 export const INTERNAL_ANALYSIS_ENDPOINT = '/api/analyze-link';

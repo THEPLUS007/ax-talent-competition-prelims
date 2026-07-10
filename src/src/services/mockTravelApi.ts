@@ -71,19 +71,24 @@ function normalizeRecommendationScope(scope?: string): string {
   return (scope ?? '').trim().toLowerCase().replace(/\s+/g, '');
 }
 
-function findRegionRecommendations(scope?: string): TravelBlock[] {
+function findExactRegionRecommendations(scope?: string): TravelBlock[] {
   const normalizedScope = normalizeRecommendationScope(scope);
 
   if (!normalizedScope) {
     return [];
   }
 
-  const matchedEntry = Object.entries(mockRegionRecommendations).find(([region]) => {
-    const normalizedRegion = normalizeRecommendationScope(region);
-    return normalizedRegion === normalizedScope || normalizedScope.includes(normalizedRegion) || normalizedRegion.includes(normalizedScope);
-  });
+  const matchedEntry = Object.entries(mockRegionRecommendations).find(
+    ([region]) => normalizeRecommendationScope(region) === normalizedScope,
+  );
 
   return matchedEntry?.[1] ?? [];
+}
+
+function uniqueBlocks(blocks: TravelBlock[]): TravelBlock[] {
+  return blocks.filter(
+    (block, index, currentBlocks) => currentBlocks.findIndex((currentBlock) => currentBlock.id === block.id) === index,
+  );
 }
 
 function readCurrentSavedPlan(): SavedTravelPlan | null {
@@ -166,16 +171,19 @@ export async function createTripFromSource(content: string): Promise<TravelPlanP
 
 export async function getRecommendations(trip?: TripFormData, day?: TravelDay): Promise<TravelBlock[]> {
   const city = resolveMockCityFromTrip(trip, day);
-  const regionRecommendations = [
-    ...findRegionRecommendations(day?.region),
-    ...findRegionRecommendations(day?.city),
-  ];
-  const uniqueRegionRecommendations = regionRecommendations.filter(
-    (block, index, blocks) => blocks.findIndex((currentBlock) => currentBlock.id === block.id) === index,
-  );
-  const recommendations = uniqueRegionRecommendations.length > 0 ? uniqueRegionRecommendations : mockCityRecommendations[city];
+  const regionRecommendations = findExactRegionRecommendations(day?.region);
+  const dayCityRecommendations = findExactRegionRecommendations(day?.city);
+  const tripCityRecommendations = findExactRegionRecommendations(trip?.city);
+  const recommendations =
+    regionRecommendations.length > 0
+      ? regionRecommendations
+      : dayCityRecommendations.length > 0
+        ? dayCityRecommendations
+        : tripCityRecommendations.length > 0
+          ? tripCityRecommendations
+          : mockCityRecommendations[city];
 
-  return recommendations.map((block) => ({ ...block }));
+  return uniqueBlocks(recommendations).map((block) => ({ ...block }));
 }
 
 export async function saveTrip(payload: TravelPlanPayload): Promise<{ ok: true }> {
