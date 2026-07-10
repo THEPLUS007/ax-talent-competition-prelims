@@ -24,7 +24,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['mcp/**/*.mjs'],
+    files: ['mcp/**/*.mjs', 'tests/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2020,
       globals: {

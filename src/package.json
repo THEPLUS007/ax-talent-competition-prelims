@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview --host 0.0.0.0 --port 5173 --strictPort",
     "serve": "npm run build && vite preview --host 0.0.0.0 --port 5173 --strictPort",
-    "test:smoke": "playwright test tests/smoke-real-mode.spec.ts"
+    "test:smoke": "playwright test tests/smoke-real-mode.spec.ts",
+    "test:mcp": "node tests/mcp-server.test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

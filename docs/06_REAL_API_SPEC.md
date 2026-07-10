@@ -6,10 +6,10 @@
 
 ## 공통 원칙
 
-- 기본 Mock 모드: `VITE_USE_MOCK=true`
-- Real 모드: `VITE_USE_MOCK=false`
+- 웹 UI Real 모드 기본값: `VITE_USE_MOCK` 미설정 또는 `VITE_USE_MOCK=false`
+- 웹 UI Mock 모드: `VITE_USE_MOCK=true`
 - Real 실패 시 Mock fallback: `VITE_AUTO_FALLBACK=true`
-- 기본 timeout: `API_TIMEOUT_MS = 8000ms`
+- 프론트 API 대기 timeout: `API_TIMEOUT_MS = 120000ms`; Gemini 개별 요청 timeout/retry/concurrency는 서버 환경변수로 조정
 - 브라우저 클라이언트는 Gemini/Places 비밀키를 직접 보관하지 않는다.
 - 모든 AI/크롤링/외부 장소 검색은 서버/API proxy에서 수행한다.
 - Real API 응답은 현재 TypeScript 모델과 호환되어야 한다.
@@ -216,7 +216,7 @@ YouTube 링크, 블로그 링크, 일반 URL, 여행 일정 텍스트를 분석�
 
 ### Mock 사용 여부
 
-현재 Mock 사용 중. 현재 Real 모드에서는 프론트가 내부 `/api/analyze-link` proxy를 호출한다.
+현재 Real 모드에서는 프론트가 내부 `/api/analyze-link` proxy를 호출한다. 실패 시 `travelApi.ts` 경계에서 Mock fallback을 사용한다. 영상 자막 전체 추출이나 모든 블로그 본문 완전 크롤링은 현재 MVP 범위가 아니다.
 
 ---
 
@@ -282,7 +282,7 @@ YouTube 링크, 블로그 링크, 일반 URL, 여행 일정 텍스트를 분석�
 
 ### Mock 사용 여부
 
-현재 일부 함수는 Mock 위임이며, Gemini 호출은 브라우저가 아니라 서버/API proxy에서 수행한다.
+현재 Real 모드에서는 `/api/generate-trip`이 서버/API proxy에서 Gemini를 호출한다. Gemini 실패, timeout, rate limit, JSON parse 실패 시 `travelApi.ts` 경계에서 Mock fallback을 사용한다.
 
 ---
 
@@ -352,7 +352,7 @@ GET이므로 없음.
 
 ### Mock 사용 여부
 
-현재 Mock 사용 중. Real 구현 시 `realTravelApi.getRecommendations(trip, day)` 서명을 확장하는 작업이 필요하다.
+현재 Real 모드에서는 `/api/recommendations`가 서버/API proxy에서 Gemini를 호출한다. 결과 검증 후 기존 장소와 중복되는 추천은 제거하며, 실패 시 도시/지역 Mock 추천 fallback을 사용한다.
 
 ---
 
@@ -411,7 +411,7 @@ GET이므로 없음.
 
 ### Mock 사용 여부
 
-현재 Mock/localStorage 사용 중.
+현재 Real 모드에서는 `/api/trips` 임시 in-memory persistence를 사용하고, 실패 또는 비어 있음 시 localStorage-backed Mock fallback을 사용한다.
 
 ---
 
@@ -471,7 +471,7 @@ GET이므로 없음.
 
 ### Mock 사용 여부
 
-현재 Mock 사용 중.
+현재 Real 모드에서는 임시 server persistence를 우선 사용하고 실패 시 Mock/localStorage fallback을 사용한다.
 
 ---
 
@@ -604,13 +604,13 @@ null
 
 ### Fallback 정책
 
-- 현재 장소 검색은 `travelApi.ts` 경유가 아니라 `placeSearchService.ts` 내 Mock 서비스로 동작한다.
-- Real 도입 시 같은 `PlaceSearchResult[]`로 매핑하면 UI 변경 없이 교체 가능하다.
+- 현재 장소 검색은 `travelApi.ts` 경유가 아니라 `placeSearchService.ts`에서 `/api/places/search` Nominatim proxy를 호출한다.
+- 같은 `PlaceSearchResult[]`로 매핑하므로 UI 변경 없이 fallback과 교체 가능하다.
 - provider 실패 시 region/city 기반 Mock 장소 후보를 fallback으로 사용할 수 있다.
 
 ### Mock 사용 여부
 
-현재 Mock 사용 중. 현재 Real 모드에서는 OpenStreetMap Nominatim을 서버/API proxy에서 호출한다.
+현재 Real 모드에서는 OpenStreetMap Nominatim을 서버/API proxy에서 호출한다. 실패 시 Mock/safe fallback을 사용한다.
 
 ---
 
@@ -630,7 +630,7 @@ null
 
 1. `realTravelApi.ts`에 endpoint 환경변수 또는 base URL 설정 추가.
 2. `generateTripWithAI`, `getRecommendations`, `saveTrip`, `loadTrips`, `loadTrip`의 mock 위임 제거.
-3. `getRecommendations(trip, day)`가 trip/day context를 Real API에 전달하도록 서명 확장.
+3. 추천 품질 튜닝과 장소 검증 고도화.
 4. `placeSearchService.ts`를 adapter 구조로 바꾸거나 `travelApi.ts` 계층에 편입.
 5. 서버/API proxy에서 Gemini/Places 비밀키 관리.
 6. API 응답 validator 또는 최소 shape guard 추가 권장.

@@ -1,28 +1,14 @@
-const encoder = new TextEncoder();
+import { createFallbackTravelResult } from './itineraryFallback.mjs';
 
-const mockDays = [
-  {
-    id: 'mcp-day-1',
-    dayNumber: 1,
-    title: 'MCP Mock Day 1',
-    blocks: [
-      {
-        id: 'mcp-block-checkin',
-        title: '숙소 체크인',
-        category: 'stay',
-        priceLevel: 'medium',
-        time: '15:00',
-        location: '제주시',
-        memo: 'MCP Mock 분석 결과',
-        estimatedCost: '120,000원',
-      },
-    ],
-  },
-];
+const realMcpProviderEnabled = process.env.TRAVEL_BLOCKS_USE_MOCK === 'false';
 
-function writeMessage(message) {
-  const payload = JSON.stringify(message);
-  process.stdout.write(`Content-Length: ${encoder.encode(payload).length}\r\n\r\n${payload}`);
+function writeJson(message) {
+  process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function logError(message, error) {
+  const suffix = error instanceof Error ? `: ${error.message}` : '';
+  process.stderr.write(`[travel-blocks-mcp] ${message}${suffix}\n`);
 }
 
 function createResponse(id, result) {
@@ -33,118 +19,160 @@ function createResponse(id, result) {
   };
 }
 
-function createError(id, message) {
+function createError(id, code, message) {
   return {
     jsonrpc: '2.0',
-    id,
+    id: id ?? null,
     error: {
-      code: -32000,
+      code,
       message,
     },
   };
 }
 
-function handleRequest(request) {
-  try {
-    if (request.method === 'initialize') {
-      return createResponse(request.id, {
-        protocolVersion: '2024-11-05',
-        capabilities: {
-          tools: {},
-        },
-        serverInfo: {
-          name: 'travel-blocks-ai-local',
-          version: '0.1.0',
-        },
-      });
-    }
+function isNotification(request) {
+  return request && typeof request === 'object' && request.id === undefined;
+}
 
-    if (request.method === 'tools/list') {
-      return createResponse(request.id, {
-        tools: [
-          {
-            name: 'analyze_travel_source',
-            description: 'Return deterministic mock Travel Blocks AI itinerary data.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                sourceType: {
-                  type: 'string',
-                  enum: ['youtube', 'blog', 'text'],
-                },
-                content: {
-                  type: 'string',
-                },
-              },
-              required: ['sourceType', 'content'],
+function listTools(id) {
+  return createResponse(id, {
+    tools: [
+      {
+        name: 'analyze_travel_source',
+        description: 'Analyze travel text or URL context and return an input-based deterministic fallback itinerary without external credentials.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sourceType: {
+              type: 'string',
+              enum: ['youtube', 'blog', 'text'],
+              description: 'Input source type inferred or selected by the caller.',
+            },
+            content: {
+              type: 'string',
+              description: 'Travel URL, blog URL, YouTube URL string, or free-form itinerary request.',
             },
           },
-        ],
-      });
-    }
+          additionalProperties: false,
+        },
+      },
+    ],
+  });
+}
 
-    if (request.method === 'tools/call') {
-      const toolName = request.params?.name;
+function callTool(id, params) {
+  const toolName = params?.name;
+  const args = params?.arguments && typeof params.arguments === 'object' ? params.arguments : {};
 
-      if (toolName !== 'analyze_travel_source') {
-        return createError(request.id, `Unknown tool: ${toolName}`);
-      }
+  if (toolName !== 'analyze_travel_source') {
+    return createError(id, -32602, `Unknown tool: ${toolName ?? 'undefined'}`);
+  }
 
-      return createResponse(request.id, {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({ days: mockDays }, null, 2),
-          },
-        ],
-      });
-    }
+  const sourceType = typeof args.sourceType === 'string' ? args.sourceType : 'text';
+  const content = typeof args.content === 'string' ? args.content : '';
+  const mode = realMcpProviderEnabled ? 'deterministic-fallback' : 'deterministic-fallback';
+  const result = createFallbackTravelResult(content, sourceType, mode);
 
-    if (request.id === undefined) {
-      return null;
-    }
+  if (realMcpProviderEnabled) {
+    result.note = 'Real MCP provider is not implemented. Returning input-based deterministic fallback without external credentials.';
+  }
 
-    return createError(request.id, `Unsupported method: ${request.method}`);
+  return createResponse(id, {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify(result, null, 2),
+      },
+    ],
+  });
+}
+
+function handleRequest(request) {
+  if (!request || typeof request !== 'object' || request.jsonrpc !== '2.0' || typeof request.method !== 'string') {
+    return createError(request?.id, -32600, 'Invalid Request');
+  }
+
+  if (request.method === 'notifications/initialized') {
+    return null;
+  }
+
+  if (isNotification(request)) {
+    return null;
+  }
+
+  if (request.method === 'initialize') {
+    return createResponse(request.id, {
+      protocolVersion: request.params?.protocolVersion ?? '2025-03-26',
+      capabilities: {
+        tools: {},
+      },
+      serverInfo: {
+        name: 'travel-blocks-ai-local',
+        version: '0.1.0',
+      },
+    });
+  }
+
+  if (request.method === 'tools/list') {
+    return listTools(request.id);
+  }
+
+  if (request.method === 'tools/call') {
+    return callTool(request.id, request.params);
+  }
+
+  return createError(request.id, -32601, `Method not found: ${request.method}`);
+}
+
+function handleLine(line) {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return;
+  }
+
+  let request;
+
+  try {
+    request = JSON.parse(trimmed);
   } catch (error) {
-    return createError(request.id, error instanceof Error ? error.message : 'Unknown MCP server error');
+    logError('Parse error', error);
+    writeJson(createError(null, -32700, 'Parse error'));
+    return;
+  }
+
+  try {
+    const response = handleRequest(request);
+
+    if (response) {
+      writeJson(response);
+    }
+  } catch (error) {
+    logError('Request handling failed', error);
+    writeJson(createError(request?.id, -32603, 'Internal error'));
   }
 }
 
-let buffer = Buffer.alloc(0);
+let buffer = '';
+
+process.stdin.setEncoding('utf8');
 
 process.stdin.on('data', (chunk) => {
-  buffer = Buffer.concat([buffer, chunk]);
+  buffer += chunk;
+  const lines = buffer.split('\n');
+  buffer = lines.pop() ?? '';
 
-  while (buffer.length > 0) {
-    const headerEnd = buffer.indexOf('\r\n\r\n');
-
-    if (headerEnd === -1) {
-      break;
-    }
-
-    const header = buffer.slice(0, headerEnd).toString('utf8');
-    const lengthMatch = header.match(/Content-Length:\s*(\d+)/i);
-
-    if (!lengthMatch) {
-      buffer = buffer.slice(headerEnd + 4);
-      continue;
-    }
-
-    const contentLength = Number(lengthMatch[1]);
-    const messageStart = headerEnd + 4;
-    const messageEnd = messageStart + contentLength;
-
-    if (buffer.length < messageEnd) {
-      break;
-    }
-
-    const rawMessage = buffer.slice(messageStart, messageEnd).toString('utf8');
-    buffer = buffer.slice(messageEnd);
-
-    const response = handleRequest(JSON.parse(rawMessage));
-
-    if (response) {
-      writeMessage(response);
-    }
+  for (const line of lines) {
+    handleLine(line);
   }
+});
+
+process.stdin.on('end', () => {
+  if (buffer.trim()) {
+    handleLine(buffer);
+  }
+});
+
+process.stdin.on('error', (error) => {
+  logError('stdin error', error);
 });

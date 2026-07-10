@@ -1,23 +1,23 @@
 # 실제 연동 체크리스트
 
-Travel Blocks AI는 현재 해커톤 심사 환경에서 외부 API 없이 동작하도록 Mock API를 기본값으로 사용합니다. 실제 API 키를 전달받으면 `src/src/services` 계층만 교체/확장하는 방식으로 전환합니다.
+Travel Blocks AI 웹 UI는 현재 `VITE_USE_MOCK=false`를 기본값으로 사용하며, Gemini/Nominatim은 내부 서버 proxy를 통해 호출합니다. 심사 환경에서 외부 API가 실패하거나 키가 없을 때는 `VITE_AUTO_FALLBACK=true`로 Mock/safe fallback을 사용합니다. MCP 도구는 자격 증명 없이 재현 가능하도록 입력 기반 deterministic fallback을 기본 동작으로 유지합니다.
 
-## 1. 현재 Mock으로 동작 중인 기능
+## 1. 현재 Real/Fallback 동작
 
-- AI 여행 생성: `travelApi.generateTripWithAI()` -> `mockTravelApi.generateTripWithAI()`
-- 링크/텍스트 분석: `travelApi.analyzeLinkOrText()` -> `mockTravelApi.analyzeLinkOrText()`
-- AI 추천 블록: `travelApi.getRecommendations()` -> `mockTravelApi.getRecommendations()`
-- 여행 저장: `travelApi.saveTrip()` -> 현재 localStorage 기반 Mock 저장
-- User2 여행 목록: `travelApi.loadTrips()` -> `mockSavedTravelPlans`
+- AI 여행 생성: `travelApi.generateTripWithAI()` -> Real mode에서 `/api/generate-trip` Gemini proxy 호출, 실패 시 Mock fallback
+- 링크/텍스트 분석: `travelApi.analyzeLinkOrText()` -> Real mode에서 `/api/analyze-link` Gemini proxy 호출, 실패 시 Mock fallback
+- AI 추천 블록: `travelApi.getRecommendations()` -> Real mode에서 `/api/recommendations` Gemini proxy 호출, 실패 시 도시/지역 Mock fallback
+- 장소 검색/좌표/역지오코딩: `placeSearchService` -> Nominatim proxy 호출, 실패 시 Mock/safe fallback
+- 여행 저장/불러오기: `/api/trips` 임시 in-memory persistence 사용, 실패 또는 비어 있음 시 localStorage-backed Mock fallback
+- MCP 도구: `src/mcp/server.mjs` -> 도시, 일수, 테마를 추출하는 입력 기반 deterministic fallback; Real MCP provider is not implemented
 
-## 2. 실제 연동으로 바꿔야 하는 기능
+## 2. 아직 고도화가 필요한 기능
 
-- AI 여행 생성 API
-- 링크/텍스트 분석 API
-- 추천 블록 생성 API
-- 여행 목록 조회 API
-- 여행 상세 조회 API
-- 여행 저장 API
+- 영상 자막 전체 추출
+- 모든 블로그 본문 완전 크롤링 및 요약
+- 영구 DB 기반 저장/불러오기
+- 추천 품질 랭킹 및 장소 검증
+- Real MCP provider 연동이 필요하다면 별도 구현
 
 ## 3. 필요한 API 키/환경변수
 
@@ -38,9 +38,11 @@ GEMINI_MODEL=gemini-2.5-flash
 - 설정: `src/src/services/config.ts`
 - API 선택/fallback: `src/src/services/travelApi.ts`
 - Mock 구현: `src/src/services/mockTravelApi.ts`
-- 실제 API 뼈대: `src/src/services/realTravelApi.ts`
+- Real API 호출: `src/src/services/realTravelApi.ts`
+- Gemini server-only client: `src/server/geminiClient.ts`
+- Internal API routes: `src/server/internalApi.ts`
 
-API 키를 받으면 우선 `realTravelApi.ts`의 함수 내부를 실제 endpoint 호출로 교체합니다. UI 컴포넌트와 hook은 `travelApi.ts`만 바라보도록 유지합니다.
+API 키는 `src/.env.local` 또는 서버 환경변수에만 둡니다. UI 컴포넌트와 hook은 `travelApi.ts`만 바라보도록 유지합니다.
 
 ## 5. 저장소를 localStorage에서 DB로 바꿀 경우
 
@@ -127,10 +129,10 @@ API 키를 받으면 우선 `realTravelApi.ts`의 함수 내부를 실제 endpoi
 
 ## 9. API 키를 전달받으면 수정할 파일
 
-1. `.env` 또는 배포 환경변수에 값을 입력합니다.
-2. `VITE_USE_MOCK=false`로 변경합니다.
-3. `src/src/services/realTravelApi.ts`에서 실제 서버 endpoint 호출을 연결합니다.
-4. 브라우저에 직접 비밀키를 넣지 말고, 서버/API proxy endpoint만 `VITE_*_ENDPOINT`로 노출합니다.
+1. 로컬에서는 `src/.env.local`, 배포에서는 서버 환경변수에 값을 입력합니다.
+2. `VITE_USE_MOCK=false` 또는 미설정 상태를 유지합니다.
+3. 브라우저에 직접 비밀키를 넣지 말고, 서버/API proxy에서만 `process.env`로 읽습니다.
+4. MCP 도구는 별도 Real provider가 구현되기 전까지 입력 기반 deterministic fallback으로 유지합니다.
 
 ## 10. 보안 주의사항
 
