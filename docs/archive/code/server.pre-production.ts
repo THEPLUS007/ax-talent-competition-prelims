@@ -1,0 +1,13 @@
+import { GeminiTravelAiProvider } from '@travel-blocks/ai';
+import { TestAiProvider, TestPlaceProvider } from '@travel-blocks/test-fixtures';
+import { AnonymousSessionAuth } from './auth.js';
+import { buildApp } from './app.js';
+import { UnconfiguredPlaceProvider } from './places.js';
+import { createPool, PostgresTripRepository } from './repository.js';
+const databaseUrl=process.env.DATABASE_URL;if(!databaseUrl)throw new Error('DATABASE_URL is required');
+const repository=new PostgresTripRepository(createPool(databaseUrl));
+const useTest=process.env.NODE_ENV!=='production'&&process.env.AI_PROVIDER==='test';
+const ai=useTest?new TestAiProvider():new GeminiTravelAiProvider({apiKey:process.env.GEMINI_API_KEY||'',model:process.env.GEMINI_MODEL||'gemini-3.5-flash',timeoutMs:Number(process.env.GEMINI_TIMEOUT_MS)||15000,maxRetries:Number(process.env.GEMINI_MAX_RETRIES)||2,maxConcurrency:Number(process.env.GEMINI_MAX_CONCURRENCY)||2});
+const places=useTest?new TestPlaceProvider():new UnconfiguredPlaceProvider();
+const app=await buildApp({repository,auth:new AnonymousSessionAuth(repository,process.env.NODE_ENV==='production'),ai,places,logger:true});
+await app.listen({host:process.env.API_HOST||'0.0.0.0',port:Number(process.env.API_PORT)||3000});
