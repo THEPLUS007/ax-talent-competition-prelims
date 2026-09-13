@@ -50,6 +50,8 @@ try {
         timeoutMs: config.geminiTimeoutMs,
         maxRetries: config.geminiMaxRetries,
         maxConcurrency: config.geminiMaxConcurrency,
+        observer: { record: (event) => console.info(`[Gemini] run ${JSON.stringify(event)}`) },
+        onObserverError: (error) => console.warn(`[Gemini] telemetry_error name=${error instanceof Error ? error.name : 'unknown'}`),
       })
     : new UnavailableAiProvider();
   app = await buildApp({

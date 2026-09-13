@@ -88,8 +88,9 @@ export function loadApiConfig(): ApiConfig {
     geminiApiKey: process.env.GEMINI_API_KEY || undefined,
     geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
     geminiTimeoutMs: integer('GEMINI_TIMEOUT_MS', 15_000, 1000, 120_000),
-    geminiMaxRetries: integer('GEMINI_MAX_RETRIES', 2, 0, 5),
-    geminiMaxConcurrency: integer('GEMINI_MAX_CONCURRENCY', 2, 1, 20),
+    // Free-tier protection: retry only inside the provider and serialize Gemini calls.
+    geminiMaxRetries: integer('GEMINI_MAX_RETRIES', 2, 0, 2),
+    geminiMaxConcurrency: integer('GEMINI_MAX_CONCURRENCY', 1, 1, 1),
     dbMaxConnections: integer('DB_MAX_CONNECTIONS', 10, 1, 50),
     dbConnectionTimeoutMs: integer('DB_CONNECTION_TIMEOUT_MS', 5000, 100, 60_000),
     dbIdleTimeoutMs: integer('DB_IDLE_TIMEOUT_MS', 30_000, 1000, 600_000),

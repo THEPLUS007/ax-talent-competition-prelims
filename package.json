@@ -13,6 +13,7 @@
     "dev:web": "npm run dev -w @travel-blocks/web",
     "build": "npm run build -w @travel-blocks/shared && npm run build -w @travel-blocks/domain && npm run build -w @travel-blocks/ai && npm run build -w @travel-blocks/api && npm run build -w @travel-blocks/mcp && npm run build -w @travel-blocks/web",
     "lint": "npm run lint --workspaces --if-present",
+    "verify": "npm run lint && npm test",
     "test": "npm run test:unit && npm run test:api && npm run test:mcp",
     "test:unit": "npm run test -w @travel-blocks/domain && npm run test -w @travel-blocks/ai",
     "test:api": "npm run test -w @travel-blocks/api",
