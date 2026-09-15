@@ -51,6 +51,7 @@ export interface ApiConfig {
   cookieSecure: boolean;
   trustProxy: boolean;
   webOrigin?: string;
+  geminiLongTaskTimeoutMs: number;
   geminiApiKey?: string;
   geminiModel: string;
   geminiTimeoutMs: number;
@@ -88,6 +89,7 @@ export function loadApiConfig(): ApiConfig {
     geminiApiKey: process.env.GEMINI_API_KEY || undefined,
     geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
     geminiTimeoutMs: integer('GEMINI_TIMEOUT_MS', 15_000, 1000, 120_000),
+    geminiLongTaskTimeoutMs: integer('GEMINI_LONG_TASK_TIMEOUT_MS', 40_000, 15_000, 60_000),
     // Free-tier protection: retry only inside the provider and serialize Gemini calls.
     geminiMaxRetries: integer('GEMINI_MAX_RETRIES', 2, 0, 2),
     geminiMaxConcurrency: integer('GEMINI_MAX_CONCURRENCY', 1, 1, 1),

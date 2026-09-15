@@ -12,6 +12,7 @@ Unit and CI tests must inject a mock `fetch`; they must never use a production G
 
 - The provider serializes calls by default (`GEMINI_MAX_CONCURRENCY=1`).
 - Retry is owned only by the provider. It honors `Retry-After`; otherwise it uses bounded exponential backoff with jitter.
+- `extract_intent` and `rank_places` use `GEMINI_TIMEOUT_MS` (15 seconds by default). Structured `generate_trip` and `analyze_text` use `GEMINI_LONG_TASK_TIMEOUT_MS` (40 seconds by default). A long-task client timeout is terminal: it is not retried, because the provider may still have performed inference. Retryable 429 and transient 5xx responses remain bounded by `GEMINI_MAX_RETRIES`.
 - A terminal `rate_limit`, timeout, or provider-unavailable result ends live validation. Do not manually retry it.
 - Do not run request loops, parallel live tests, model pings, or schema-isolation calls against production.
 - Keep independent top-level live tests at least 15 seconds apart (20 seconds preferred). Normal calls inside one production request remain sequential.

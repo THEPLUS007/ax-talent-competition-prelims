@@ -48,6 +48,7 @@ try {
         apiKey: config.geminiApiKey,
         model: config.geminiModel,
         timeoutMs: config.geminiTimeoutMs,
+        longTaskTimeoutMs: config.geminiLongTaskTimeoutMs,
         maxRetries: config.geminiMaxRetries,
         maxConcurrency: config.geminiMaxConcurrency,
         observer: { record: (event) => console.info(`[Gemini] run ${JSON.stringify(event)}`) },

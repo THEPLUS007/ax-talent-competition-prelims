@@ -8,7 +8,47 @@ describe('Gemini adapter',()=>{
   it('malformed output을 차단한다',async()=>expect(new GeminiTravelAiProvider({apiKey:'test',fetch:async()=>response(gemini('{bad'))}).generateTrip({prompt:'서울'})).rejects.toMatchObject({code:'invalid_output'}));
   it.each([[429,'rate_limit'],[503,'unavailable']])('%s 오류를 분류한다',async(status,code)=>expect(new GeminiTravelAiProvider({apiKey:'test',maxRetries:0,fetch:async()=>response({},status as number)}).generateTrip({prompt:'서울'})).rejects.toMatchObject({code}));
   it('빈 결과를 차단한다',async()=>expect(new GeminiTravelAiProvider({apiKey:'test',fetch:async()=>response({candidates:[]})}).generateTrip({prompt:'서울'})).rejects.toBeInstanceOf(AiProviderError));
-  it('timeout을 분류한다',async()=>expect(new GeminiTravelAiProvider({apiKey:'test',timeoutMs:1,maxRetries:0,fetch:(_,init)=>new Promise((_,reject)=>init?.signal?.addEventListener('abort',()=>reject(new DOMException('x','AbortError'))))}).generateTrip({prompt:'서울'})).rejects.toMatchObject({code:'timeout'}));
+  it('timeout을 분류한다',async()=>expect(new GeminiTravelAiProvider({apiKey:'test',timeoutMs:1,longTaskTimeoutMs:1,maxRetries:0,fetch:(_,init)=>new Promise((_,reject)=>init?.signal?.addEventListener('abort',()=>reject(new DOMException('x','AbortError'))))}).generateTrip({prompt:'서울'})).rejects.toMatchObject({code:'timeout'}));
+  it('long generate_trip은 short timeout을 넘어도 long timeout 안에서 성공한다',async()=>{
+    vi.useFakeTimers();
+    try {
+      const fetcher=vi.fn(async()=>new Promise<Response>((resolve)=>setTimeout(()=>resolve(response(gemini(JSON.stringify(valid)))),5)));
+      const result=new GeminiTravelAiProvider({apiKey:'test',timeoutMs:1,longTaskTimeoutMs:40,maxRetries:0,fetch:fetcher}).generateTrip({prompt:'서울'});
+      await vi.advanceTimersByTimeAsync(5);
+      await expect(result).resolves.toEqual(valid);
+      expect(fetcher).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+  it.each([
+    ['generate_trip',(provider:GeminiTravelAiProvider)=>provider.generateTrip({prompt:'서울'})],
+    ['analyze_text',(provider:GeminiTravelAiProvider)=>provider.analyzeText({content:'부산 2박 3일 일정'})],
+  ])('%s timeout은 long task에서 재시도하지 않고 telemetry attempt를 1로 남긴다',async(_task,run)=>{
+    vi.useFakeTimers();
+    try {
+      const events:any[]=[]; const fetcher=vi.fn((_:unknown,init:RequestInit)=>new Promise((_,reject)=>init.signal?.addEventListener('abort',()=>reject(new DOMException('x','AbortError')))));
+      const provider=new GeminiTravelAiProvider({apiKey:'test',timeoutMs:1,longTaskTimeoutMs:1,maxRetries:2,observer:{record:(event)=>events.push(event)},fetch:fetcher});
+      const result=run(provider);
+      const assertion=expect(result).rejects.toMatchObject({code:'timeout'});
+      await vi.advanceTimersByTimeAsync(1);
+      await assertion;
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(events).toEqual([expect.objectContaining({status:'error',providerAttempts:1,errorCode:'timeout'})]);
+    } finally { vi.useRealTimers(); }
+  });
+  it('short rank_places timeout은 기존 bounded retry policy를 유지한다',async()=>{
+    vi.useFakeTimers();
+    try {
+      const fetcher=vi.fn((_:unknown,init:RequestInit)=>new Promise((_,reject)=>init.signal?.addEventListener('abort',()=>reject(new DOMException('x','AbortError')))));
+      const provider=new GeminiTravelAiProvider({apiKey:'test',timeoutMs:1,longTaskTimeoutMs:40,maxRetries:1,wait:async()=>undefined,fetch:fetcher});
+      const result=provider.recommendPlaces({trip:valid.trip,day:{id:'day-1',dayNumber:1,title:'첫째 날',blocks:[]},existingPlaces:[]});
+      const assertion=expect(result).rejects.toMatchObject({code:'timeout'});
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1);
+      await assertion;
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
 });
 
 describe('Gemini quota guardrails (mock only)',()=>{
